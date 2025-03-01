@@ -1,26 +1,27 @@
 <script lang="ts">
+  import { cubicInOut, cubicOut } from "svelte/easing";
   import { formatFromSeconds } from "./lib/utils";
-
-  /// Enums
-
+  import { Tween } from "svelte/motion";
 
   /// State Management
-  
-  let currentTimerType: "work" | "break" | "longBreak" = $state("work");
 
   let initialized = false;
 
   let isRunning = $state(false);
   let isActiveTimerPaused = $state(false);
-  let isBreak = $state(false);
-  let isLongBreak = $state(false);
   let currentTimerID: number | null = $state(null);
-
+  
   /// Pomodoro states
 
   let completedPomodoros = $state(0);
-  let objectivePomodoros = $state(4);
+  let objectivePomodoros = $state(8);
   let isObjectiveCompleted = $derived(completedPomodoros >= objectivePomodoros);
+  let isLongBreak = $derived(
+    completedPomodoros !== 0 && completedPomodoros % 4 === 0
+  );
+
+  let currentTimerType: "work" | "break" | "longBreak" = $state("work");
+  let pastTimerType: "work" | "break" | "longBreak" = $state("work");
 
   let longBreakTime = $state(15 * 60);
   let breakTime = $state(5 * 60);
@@ -34,8 +35,13 @@
 
   let formattedRemainingTime = $derived(formatFromSeconds(remainingTime));
 
-  let remainingTimePercentage = $derived((remainingTime / workTime) * 100); /// For progress bars
-  let completedPomodoroPercentage = $derived((completedPomodoros / objectivePomodoros) * 100)
+  let remainingTimePercentage = Tween.of(() => (elapsedTime / 1000) / workTime * 100, {
+    duration: 300,
+    easing: cubicInOut,
+  }); /// For progress bars
+  let completedPomodoroPercentage = $derived(
+    (completedPomodoros / objectivePomodoros) * 100
+  );
   let remainingPomodoros = $derived(objectivePomodoros - completedPomodoros);
 
   /// Initialization
@@ -46,19 +52,45 @@
     initialized = true;
   });
 
-
   const onTick = () => {
     elapsedTime = Date.now() - startTime;
-    remainingTime = workTime - Math.floor(elapsedTime / 1000);
-    if (elapsedTime >= workTime * 1000) {
-      stopTimer();
-      onPomoCompletion();
+
+    if (currentTimerType === "work") {
+      remainingTime = workTime - Math.floor(elapsedTime / 1000);
+    } else if (currentTimerType === "break") {
+      remainingTime = breakTime - Math.floor(elapsedTime / 1000);
+    } else if (currentTimerType === "longBreak") {
+      remainingTime = longBreakTime - Math.floor(elapsedTime / 1000);
+    }
+
+    if (remainingTime <= 0) {
+
+      if (remainingPomodoros === 0) {
+        return stopTimer();
+      }
+      if (currentTimerType === "break") {
+        currentTimerType = "work";
+        remainingTime = workTime;
+        return onTimerCompletion();
+      }
+      if (currentTimerType === "longBreak") {
+        currentTimerType = "work";
+        remainingTime = workTime;
+        return onTimerCompletion();
+      }
+        if (currentTimerType === "work") {
+        onPomodoroCompletion();
+        currentTimerType = isLongBreak ? "longBreak" : "break";
+        remainingTime = isLongBreak ? longBreakTime : breakTime;
+        return onTimerCompletion();
+      }
     }
   };
 
   const startTimer = () => {
+    currentTimerID ? clearInterval(currentTimerID) : null;
     isRunning = true;
-    if (isActiveTimerPaused) {
+    if (!isRunning) {
       startTime = Date.now() - elapsedTime;
     } else {
       startTime = Date.now();
@@ -70,21 +102,43 @@
 
   const stopTimer = () => {
     isRunning = false;
-    isActiveTimerPaused = true;
     currentTimerID ? clearInterval(currentTimerID) : null;
   };
 
   const resetTimer = () => {
     stopTimer();
-    isActiveTimerPaused = false;
     remainingTime = workTime;
     elapsedTime = 0;
   };
+  const onPomodoroCompletion = () => {
+    return completedPomodoros += 1;
+  }
+  const onTimerCompletion = () => {
+    stopTimer();
+    resetTimer();
+    startTimer();    
 
-  const onPomoCompletion = () => {
-    completedPomodoros = completedPomodoros + 1;
-    if (completedPomodoros === objectivePomodoros) {
-    }
+
+    // if (currentTimerType === "work") {
+    //   completedPomodoros += 1;
+
+    //   if (isObjectiveCompleted) {
+    //     return stopTimer();
+    //   }
+
+    //     if (isLongBreak) {
+    //   console.log("Long Break");
+    //   currentTimerType = "longBreak";
+    //   remainingTime = longBreakTime;
+    //   return startTimer();
+    // } else if (currentTimerType === "break") {
+    //   remainingTime = breakTime;
+    //   return startTimer();
+    // } else if (currentTimerType === "break") {
+    //   currentTimerType = "work";
+    //   remainingTime = workTime;
+    //   return startTimer();
+    // }
   };
 
   const handleStart = () => {
@@ -94,6 +148,12 @@
 
 <main class="container flex flex-col items-center justify-center h-screen">
   <h1>Pomobun</h1>
+  <progress class="w-1/2" value={remainingTimePercentage.current} max={100}></progress>
+  <progress class="w-1/2" value={completedPomodoroPercentage} max="100"
+  ></progress>
+  <p>
+    {currentTimerType}
+  </p>
   <p>
     {completedPomodoros}/{objectivePomodoros}
   </p>
