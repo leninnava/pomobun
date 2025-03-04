@@ -1,99 +1,102 @@
 <script lang="ts">
-  import { cubicInOut, cubicOut } from "svelte/easing";
-  import { formatFromSeconds } from "./lib/utils";
+  import { cubicInOut } from "svelte/easing";
+  import { formatFromSeconds, formatHMSToSeconds } from "./lib/utils";
   import { Tween } from "svelte/motion";
-
   /// State Management
 
   let initialized = false;
 
   let isRunning = $state(false);
-  let isActiveTimerPaused = $state(false);
   let currentTimerID: number | null = $state(null);
-  
+
   /// Pomodoro states
 
-  let completedPomodoros = $state(0);
-  let objectivePomodoros = $state(8);
-  let isObjectiveCompleted = $derived(completedPomodoros >= objectivePomodoros);
-  let isLongBreak = $derived(
-    completedPomodoros !== 0 && completedPomodoros % 4 === 0
-  );
+  
 
   let currentTimerType: "work" | "break" | "longBreak" = $state("work");
-  let pastTimerType: "work" | "break" | "longBreak" = $state("work");
 
-  let longBreakTime = $state(15 * 60);
-  let breakTime = $state(5 * 60);
-  let workTime = $state(25 * 60);
-
-  let startTime = $state(0);
-  let elapsedTime = $state(0);
-  let remainingTime = $state(0);
+  let settings = $state({
+    workTime: 25 * 60,
+    breakTime: 5 * 60,
+    longBreakTime: 15 * 60,
+    objectivePomodoros: 8,
+    completedPomodoros: 0,
+    remainingTime: 0,
+    startTime: 0,
+    elapsedTime: 0,
+  });
+  
+  
+  let isObjectiveCompleted = $derived(settings.completedPomodoros >= settings.objectivePomodoros);
+  let isLongBreak = $derived(
+    settings.completedPomodoros !== 0 && settings.completedPomodoros % 4 === 0
+  );
 
   /// UI State
 
-  let formattedRemainingTime = $derived(formatFromSeconds(remainingTime));
-
-  let remainingTimePercentage = Tween.of(() => (elapsedTime / 1000) / workTime * 100, {
-    duration: 300,
-    easing: cubicInOut,
-  }); /// For progress bars
-  let completedPomodoroPercentage = $derived(
-    (completedPomodoros / objectivePomodoros) * 100
+  let formattedRemainingTime = $derived(formatFromSeconds(settings.remainingTime));
+  
+  let currentTimerDuration = $derived(
+    currentTimerType === "work"
+      ? settings.workTime
+      : currentTimerType === "break"
+      ? settings.breakTime
+      : settings.longBreakTime
   );
-  let remainingPomodoros = $derived(objectivePomodoros - completedPomodoros);
+
+  let remainingTimePercentage = Tween.of(
+    () => (settings.elapsedTime / 1000 / currentTimerDuration) * 100,
+    {
+      duration: 300,
+      easing: cubicInOut,
+    }
+  ); /// For progress bars
+  let completedPomodoroPercentage = $derived(
+    (settings.completedPomodoros / settings.objectivePomodoros) * 100
+  );
+  let remainingPomodoros = $derived(settings.objectivePomodoros - settings.completedPomodoros);
+
 
   /// Initialization
 
   $effect(() => {
-    if (initialized) return;
-    remainingTime = workTime;
     initialized = true;
+    settings.remainingTime = currentTimerDuration;
   });
 
+  let settingsModal: HTMLDialogElement;
+
+
   const onTick = () => {
-    elapsedTime = Date.now() - startTime;
-
-    if (currentTimerType === "work") {
-      remainingTime = workTime - Math.floor(elapsedTime / 1000);
-    } else if (currentTimerType === "break") {
-      remainingTime = breakTime - Math.floor(elapsedTime / 1000);
-    } else if (currentTimerType === "longBreak") {
-      remainingTime = longBreakTime - Math.floor(elapsedTime / 1000);
-    }
-
-    if (remainingTime <= 0) {
-
-      if (remainingPomodoros === 0) {
+     if (isObjectiveCompleted) {
         return stopTimer();
       }
-      if (currentTimerType === "break") {
+    settings.elapsedTime = Date.now() - settings.startTime;
+    settings.remainingTime = currentTimerDuration - Math.floor(settings.elapsedTime / 1000);
+
+    if (settings.remainingTime <= 0) {
+     
+      if (currentTimerType === "break" || currentTimerType === "longBreak") {
+        
         currentTimerType = "work";
-        remainingTime = workTime;
+        settings.remainingTime = currentTimerDuration;
         return onTimerCompletion();
       }
-      if (currentTimerType === "longBreak") {
-        currentTimerType = "work";
-        remainingTime = workTime;
-        return onTimerCompletion();
-      }
-        if (currentTimerType === "work") {
+      if (currentTimerType === "work") {
         onPomodoroCompletion();
         currentTimerType = isLongBreak ? "longBreak" : "break";
-        remainingTime = isLongBreak ? longBreakTime : breakTime;
+        settings.remainingTime = currentTimerDuration;
         return onTimerCompletion();
       }
     }
   };
 
   const startTimer = () => {
-    currentTimerID ? clearInterval(currentTimerID) : null;
     isRunning = true;
-    if (!isRunning) {
-      startTime = Date.now() - elapsedTime;
+    if (isRunning) {
+      settings.startTime = Date.now() - settings.elapsedTime;
     } else {
-      startTime = Date.now();
+      settings.startTime = Date.now();
     }
     currentTimerID = setInterval(() => {
       onTick();
@@ -107,55 +110,32 @@
 
   const resetTimer = () => {
     stopTimer();
-    remainingTime = workTime;
-    elapsedTime = 0;
+    settings.remainingTime = currentTimerDuration;
+    settings.elapsedTime = 0;
   };
   const onPomodoroCompletion = () => {
-    return completedPomodoros += 1;
-  }
-  const onTimerCompletion = () => {
-    stopTimer();
-    resetTimer();
-    startTimer();    
-
-
-    // if (currentTimerType === "work") {
-    //   completedPomodoros += 1;
-
-    //   if (isObjectiveCompleted) {
-    //     return stopTimer();
-    //   }
-
-    //     if (isLongBreak) {
-    //   console.log("Long Break");
-    //   currentTimerType = "longBreak";
-    //   remainingTime = longBreakTime;
-    //   return startTimer();
-    // } else if (currentTimerType === "break") {
-    //   remainingTime = breakTime;
-    //   return startTimer();
-    // } else if (currentTimerType === "break") {
-    //   currentTimerType = "work";
-    //   remainingTime = workTime;
-    //   return startTimer();
-    // }
+    return (settings.completedPomodoros += 1);
   };
-
-  const handleStart = () => {
+  const onTimerCompletion = () => {
+    resetTimer();
     startTimer();
   };
+
 </script>
 
 <main class="container flex flex-col items-center justify-center h-screen">
   <h1>Pomobun</h1>
-  <progress class="w-1/2" value={remainingTimePercentage.current} max={100}></progress>
-  <progress class="w-1/2" value={completedPomodoroPercentage} max="100"
+  <progress class="" value={remainingTimePercentage.current} max={100}
   ></progress>
+  <progress class="" value={completedPomodoroPercentage} max="100"></progress>
   <p>
-    {currentTimerType}
+    Current session:
+    <span class="font-bold">
+      {currentTimerType}
+    </span>
   </p>
   <p>
-    {completedPomodoros}/{objectivePomodoros}
+    {settings.completedPomodoros}/{settings.objectivePomodoros}
   </p>
   <p>
     {isObjectiveCompleted
@@ -170,7 +150,10 @@
   </p>
   <div class="flex flex-col gap-4">
     <div>
-      <button onclick={handleStart}>Start</button>
+      <button disabled={isRunning} 
+        class={!isRunning ? "" : "opacity-50 cursor-not-allowed"}
+       
+      onclick={startTimer}>Start</button>
       <button
         disabled={!isRunning}
         class={isRunning ? "" : "opacity-50 cursor-not-allowed"}
@@ -179,9 +162,47 @@
       <button onclick={resetTimer}>Reset</button>
     </div>
     <div class="flex flex-col bg-gray-50 rounded-2xl">
-      <button> Time settings</button>
+      <button onclick={() => settingsModal.showModal()}>Time settings</button>
     </div>
   </div>
+  <dialog bind:this={settingsModal} class="m-auto rounded-lg h-80 p-6">
+    <h2>Set your time settings</h2>
+    <form
+      method="dialog"
+      class="flex flex-col gap-4"
+      onsubmit={(e) => {
+
+        /// extract form data
+        const formData = new FormData(e.target as HTMLFormElement);
+        const workTime = String(formData.get("workTime"));
+        const breakTime = String(formData.get("breakTime"));
+        const longBreakTime = String(formData.get("longBreakTime"));
+        const objectivePomodoros = Number(formData.get("objectivePomodoros"));
+
+
+        settings = {
+          ...settings,
+          workTime: formatHMSToSeconds(workTime),
+          breakTime: formatHMSToSeconds(breakTime),
+          longBreakTime: formatHMSToSeconds(longBreakTime),
+          remainingTime: formatHMSToSeconds(workTime),
+          objectivePomodoros,
+        };
+        settingsModal.close();
+      }}
+    >
+      <label for="workTime">Work Time</label>
+      <input type="time" id="workTime " name="workTime" step="2" value={formatFromSeconds(settings.workTime)} />
+      <label for="breakTime">Break Time</label>
+      <input type="time" id="breakTime" name="breakTime" step="2" value={formatFromSeconds(settings.breakTime)} />
+      <label for="longBreakTime">Long Break Time</label>
+      <input type="time" id="longBreakTime" name="longBreakTime" step="2" value={formatFromSeconds(settings.longBreakTime)} />
+      <label for="objectivePomodoros">Objective Pomodoros</label>
+      <input type="number" id="objectivePomodoros" name="objectivePomodoros" value={settings.objectivePomodoros} />
+
+      <button type="submit">Save</button>
+    </form>
+  </dialog>
 </main>
 
 <style>
